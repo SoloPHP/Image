@@ -9,7 +9,10 @@ A small, framework-independent PHP library for processing still images with GD.
 - JPEG, PNG and WebP input and output.
 - Automatic EXIF orientation, including mirrored orientations and EXIF in PNG/WebP.
 - Immutable images: decode once, create multiple variants independently.
-- Resize within explicit bounds while preserving aspect ratio, without upscaling.
+- Resize within explicit bounds while preserving aspect ratio, without upscaling, with an optional fast mode
+  for opaque images.
+- Fit a picture into an exact canvas with transparent margins, for icons and fixed slots.
+- Reject animated PNG and WebP, or take their first frame on request.
 - Preserve transparency in PNG/WebP; composite it on white for JPEG.
 - Optional optimization that returns a result only when it is smaller than the input.
 - Configurable byte and pixel limits checked before raster decoding.
@@ -24,7 +27,7 @@ object storage, naming and cache keys. There are no framework or storage depende
 - `ext-exif`.
 
 GIF, SVG, AVIF and HEIC are outside the supported formats. Animated PNG and WebP are
-rejected instead of being reduced to a single frame.
+rejected unless you ask for their first frame with `Image::fromBytes($bytes, firstFrame: true)`.
 
 ## Installation
 
@@ -54,6 +57,12 @@ file_put_contents("/path/to/preview.{$preview->extension()}", $preview->bytes);
 orientation. `resize()` keeps the aspect ratio and never enlarges. Each result carries its
 bytes, format, MIME type, extension and dimensions, and `$image` stays as it was decoded.
 
+For an icon of an exact size, `contain()` fits the whole picture and centres it on transparent margins:
+
+```php
+$icon = Image::fromBytes($bytes, firstFrame: true)->contain(512, 512)->encode(Format::Png);
+```
+
 To keep a re-encoded image only when it is smaller than the original:
 
 ```php
@@ -69,6 +78,8 @@ $result = (new Optimizer())->optimize($bytes, Format::Webp, maxWidth: 1600, maxH
 
 - [Getting Started](https://solophp.github.io/Image/guide/)
 - [Resizing](https://solophp.github.io/Image/guide/#resize)
+- [Exact Canvas](https://solophp.github.io/Image/guide/#fit-an-exact-canvas)
+- [Animated Input](https://solophp.github.io/Image/guide/#animated-input)
 - [Encoding](https://solophp.github.io/Image/guide/#encode)
 - [Several Variants from One Source](https://solophp.github.io/Image/guide/#make-several-variants-from-one-source)
 - [Smaller-Only Optimization](https://solophp.github.io/Image/guide/#keep-only-smaller-results)
@@ -87,7 +98,8 @@ composer check
 
 The checks include Composer validation, PSR-12, PHPStan at its maximum level and PHPUnit.
 Tests create small images in memory and cover orientation, transparency, resizing,
-format conversion, input limits, malformed containers and animation detection.
+format conversion, exact canvases, input limits, malformed containers, animation
+detection and first frames of animated PNG and WebP.
 CI runs on PHP 8.3, 8.4 and 8.5, including the lowest supported development dependencies.
 
 ## License

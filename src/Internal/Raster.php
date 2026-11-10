@@ -8,10 +8,10 @@ use GdImage;
 use Solo\Image\Exception\ImageException;
 
 /**
- * Turns decoded pixels into truecolor rasters with an alpha channel, then orients and resizes them.
+ * Turns decoded pixels into truecolor rasters with an alpha channel, then orients, resizes and places them.
  *
  * normalize() and mirror() take ownership of a freshly decoded image and may change it in place.
- * resize() and turn() never change their source.
+ * resize(), turn() and place() never change their source.
  *
  * @internal
  */
@@ -20,9 +20,10 @@ final class Raster
     /** Makes every kind of GD image truecolor with real alpha, copying only when the pixels must change. */
     public static function normalize(GdImage $image): GdImage
     {
-        // Palette images and color-key transparency become alpha when copied onto a transparent canvas.
+        // Palette images and color-key transparency become alpha when copied onto a transparent canvas:
+        // imagecopy() skips color-key pixels, so they stay as the canvas was.
         if (!imageistruecolor($image) || imagecolortransparent($image) >= 0) {
-            return self::copy($image);
+            return self::place($image, imagesx($image), imagesy($image), 0, 0);
         }
         imagealphablending($image, false);
         imagesavealpha($image, true);
@@ -72,10 +73,12 @@ final class Raster
     }
 
     /**
-     * Fits inside the supplied bounds, keeping the aspect ratio and original size as upper limits.
-     * Returns the source itself when it already fits: images are never modified, so sharing is safe.
+     * The size that fits inside the bounds with the aspect ratio kept. The side that constrains takes its bound
+     * exactly and the other is rounded down, to at least one pixel. Without $upscale, the source size is a bound too.
+     *
+     * @return array{positive-int, positive-int}
      */
-    public static function resize(GdImage $source, ?int $width, ?int $height): GdImage
+    public static function fit(int $sourceWidth, int $sourceHeight, ?int $width, ?int $height, bool $upscale): array
     {
         if ($width === null && $height === null) {
             throw new \InvalidArgumentException('At least one resize bound is required');
@@ -84,52 +87,73 @@ final class Raster
             throw new \InvalidArgumentException('Resize bounds must be positive');
         }
 
-        $sourceWidth = imagesx($source);
-        $sourceHeight = imagesy($source);
-        $targetWidth = min($width ?? $sourceWidth, $sourceWidth);
-        $targetHeight = min($height ?? $sourceHeight, $sourceHeight);
+        $targetWidth = $width ?? $sourceWidth;
+        $targetHeight = $height ?? $sourceHeight;
+        if (!$upscale) {
+            $targetWidth = min($targetWidth, $sourceWidth);
+            $targetHeight = min($targetHeight, $sourceHeight);
+        }
         if ($targetWidth * $sourceHeight <= $targetHeight * $sourceWidth) {
             $targetHeight = max(1, intdiv($sourceHeight * $targetWidth, $sourceWidth));
         } else {
             $targetWidth = max(1, intdiv($sourceWidth * $targetHeight, $sourceHeight));
         }
-        if ($targetWidth === $sourceWidth && $targetHeight === $sourceHeight) {
+
+        return [max(1, $targetWidth), max(1, $targetHeight)];
+    }
+
+    /**
+     * Returns the source itself when it already has the size: images are never modified, so sharing is safe.
+     * imagecopyresampled() averages every source pixel, weighted by its alpha. $fast, meant for reducing opaque
+     * pixels, uses GD's bilinear scaler instead: it reads four source pixels per result pixel, so it skips most
+     * of a large reduction, and it lets transparent pixels darken the edges next to them.
+     *
+     * @param positive-int $width
+     * @param positive-int $height
+     */
+    public static function resize(GdImage $source, int $width, int $height, bool $fast = false): GdImage
+    {
+        $sourceWidth = imagesx($source);
+        $sourceHeight = imagesy($source);
+        if ($width === $sourceWidth && $height === $sourceHeight) {
             return $source;
         }
 
-        $image = self::canvas($targetWidth, $targetHeight);
-        $copied = imagecopyresampled(
-            $image,
-            $source,
-            0,
-            0,
-            0,
-            0,
-            $targetWidth,
-            $targetHeight,
-            $sourceWidth,
-            $sourceHeight,
-        );
-        if (!$copied) {
+        if ($fast) {
+            $image = @imagescale($source, $width, $height, IMG_BILINEAR_FIXED);
+            if ($image === false || imagesx($image) !== $width || imagesy($image) !== $height) {
+                throw new ImageException('Could not resize the image');
+            }
+            imagealphablending($image, false);
+            imagesavealpha($image, true);
+
+            return $image;
+        }
+
+        $image = self::canvas($width, $height);
+        if (!imagecopyresampled($image, $source, 0, 0, 0, 0, $width, $height, $sourceWidth, $sourceHeight)) {
             throw new ImageException('Could not resize the image');
         }
 
         return $image;
     }
 
-    private static function copy(GdImage $source): GdImage
+    /**
+     * Puts an image on a transparent canvas with its top left corner at $x, $y. A rectangle, unlike imagefill()'s
+     * flood fill, needs no working memory proportional to the image.
+     *
+     * @param positive-int $width
+     * @param positive-int $height
+     */
+    public static function place(GdImage $image, int $width, int $height, int $x, int $y): GdImage
     {
-        $width = imagesx($source);
-        $height = imagesy($source);
-        $image = self::canvas($width, $height);
-        // imagecopy() skips color-key pixels, so they must start out transparent. A rectangle, unlike
-        // imagefill()'s flood fill, needs no working memory proportional to the image.
-        imagefilledrectangle($image, 0, 0, $width - 1, $height - 1, 0x7F000000);
-        if (!imagecopy($image, $source, 0, 0, 0, 0, $width, $height)) {
+        $canvas = self::canvas($width, $height);
+        imagefilledrectangle($canvas, 0, 0, $width - 1, $height - 1, 0x7F000000);
+        if (!imagecopy($canvas, $image, $x, $y, 0, 0, imagesx($image), imagesy($image))) {
             throw new ImageException('Could not copy the image');
         }
 
-        return $image;
+        return $canvas;
     }
 
     /**

@@ -14,6 +14,7 @@ final readonly class Optimizer
     /**
      * Null means keep the original bytes. Invalid, oversized, unsupported and animated inputs raise exceptions.
      * Bounds apply to the candidate. Use Image::resize()->encode() when dimensions or output format are mandatory.
+     * $fast resizes as Image::resize() does with it.
      */
     public function optimize(
         string $bytes,
@@ -21,10 +22,11 @@ final readonly class Optimizer
         int $quality = 82,
         ?int $maxWidth = null,
         ?int $maxHeight = null,
+        bool $fast = false,
     ): ?EncodedImage {
         $image = Image::fromBytes($bytes, $this->limits);
         if ($maxWidth !== null || $maxHeight !== null) {
-            $image = $image->resize($maxWidth, $maxHeight);
+            $image = $image->resize($maxWidth, $maxHeight, $fast);
         }
         $encoded = $image->encode($format, $quality);
 

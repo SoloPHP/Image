@@ -6,9 +6,10 @@ This page explains what happens between the bytes that come in and the bytes tha
 
 - **Bytes in, bytes out.** The library never opens a file, reads an upload or writes to storage. Paths, names, cache keys and HTTP responses belong to the application, which already knows where things live.
 - **Images are immutable.** Nothing changes an `Image` after decoding. That is what lets one source produce many variants in any order, and what lets `resize()` hand back the same instance when there is nothing to do.
-- **Still images only.** An animation reduced to its first frame is a silent loss, so animated input is an error the application can answer.
+- **Still images only.** An animation reduced to its first frame is a silent loss, so animated input is an error the application can answer, unless it asks for the first frame by name.
 - **Three formats.** JPEG, PNG and WebP cover uploads and delivery on the web and are present in common GD builds. Formats that GD supports only in some builds are left out.
 - **No presets.** Thumbnail sizes and quality settings differ from one application to the next and stay there.
+- **Quality first.** The default resampling looks at every source pixel. Faster resizing that costs quality is an option you name in the call.
 
 ## Format detection
 
@@ -34,6 +35,13 @@ Mirroring is done while decoding. A quarter turn, which values `5` to `8` need a
 
 A PNG is treated as animated when it contains an `acTL`, `fcTL` or `fdAT` chunk. A WebP is treated as animated when it has an `ANIM` or `ANMF` chunk or the animation flag in its `VP8X` header. Both raise `AnimatedImageException` before any pixel is decoded.
 
+With `firstFrame: true` they are decoded as still images instead:
+
+- **PNG.** The default image, stored in the `IDAT` chunks, is decoded and the frame chunks are skipped. It is what viewers without animation support show. It is usually the first frame; an animation may also keep it out of the sequence as a separate fallback picture.
+- **WebP.** The first `ANMF` frame is rebuilt as a still WebP: a lossless `VP8L` bitstream as it is, a lossy `VP8` bitstream together with its `ALPH` chunk when it has one. The rest of the frames are not decoded. The size in the frame's bitstream, which is what the decoder allocates, must be the size the frame header declares, and is checked before decoding. The frame is placed at its offset on a canvas of the animation's size, transparent around it. The animation's background color is ignored, as the WebP specification allows and as browsers do. Blending and disposal do not matter for a first frame.
+
+The pixel limit applies to the canvas, which is what `getimagesize()` reports and what the result measures; a frame is never larger. A frame that lies outside the canvas, or an animation without frames, raises `InvalidImageException`.
+
 ## Transparency
 
 Every decoded image becomes truecolor with a full alpha channel, whatever the source was:
@@ -57,7 +65,24 @@ Each bound is first capped at the source size, which is why nothing is ever enla
 | 800 × 600 | `width: 1200` | 800 × 600, the same instance |
 | 100 × 1 | `width: 1` | 1 × 1 |
 
-Pixels are resampled with GD's `imagecopyresampled()`.
+Pixels are resampled with GD's `imagecopyresampled()`, which averages every source pixel covered by a result pixel, weighted by its opacity. Transparent pixels therefore add nothing to the color of the edges next to them, whatever color they hold.
+
+### Fast resizing
+
+`resize(fast: true)` uses `imagescale()` with GD's bilinear scaler for images decoded from JPEG. It reads four source pixels for every result pixel, so the cost depends on the size of the result rather than of the source. In a reduction by more than two, most source pixels are skipped: noise and fine patterns alias, the result is grainier and the encoded file larger. Its fixed-point arithmetic is off by up to two levels per channel. Measured on a noisy 12-megapixel photo resized to 1600 pixels wide and encoded as WebP, the whole call took 202 instead of 265 ms and the file grew from 311 to 589 KB; on a product photo with a plain background, 128 instead of 216 ms and 77 instead of 72 KB.
+
+The option is ignored for PNG and WebP sources, which can be transparent: GD's own scalers do not weight colors by opacity, so the color stored in transparent pixels, usually black, bleeds into the edges next to them. GD's other filters in `imagescale()` were measured too and left out: they average properly, but they show the same dark edges, shift the picture by about a third of a pixel and give different results in bundled GD and in libgd 2.3.
+
+### Exact canvas
+
+`contain()` fits the picture as `resize()` does, with both bounds and, unless `upscale: false`, without the source size as a further bound. The fitted picture is centred on a transparent canvas of the requested size; when the margins cannot be equal, the extra pixel goes to the right or the bottom. Enlarging uses `imagecopyresampled()` as well.
+
+| Source | Canvas | Picture inside | Position |
+|---|---|---|---|
+| 120 × 80 | `contain(64, 64)` | 64 × 42 | 0, 11 |
+| 10 × 5 | `contain(32, 32)` | 32 × 16 | 0, 8 |
+| 10 × 5 | `contain(32, 32, upscale: false)` | 10 × 5 | 11, 13 |
+| 120 × 80 | `contain(120, 80)` | The same instance | |
 
 ## Encoding
 
@@ -87,6 +112,8 @@ A decoded image takes about 4 bytes per pixel: a 12-megapixel photo holds about 
 | Palette or color-key source | A second copy of the image |
 | `encode(Format::Jpeg)` of a PNG or WebP source | A copy of the image on white |
 | `resize()` | The pixels of the result, kept as long as the result lives |
+| `contain()` with margins | The fitted picture and the canvas, which the result keeps |
+| First frame of a WebP smaller than its canvas | The frame and the canvas |
 
 Running out of PHP's `memory_limit` is a fatal error, not an exception. Choose `maxPixels` so that a worker can decode the largest source, 8 bytes per pixel for PNG, and hold it together with its largest variant. Let images go out of scope when their variants are made.
 
@@ -109,4 +136,4 @@ GD's own warnings are suppressed where the library calls it and turned into exce
 
 ## Testing
 
-Tests build small images in memory and cover all eight orientations in each format, transparency through orientation, resizing and encoding, rounding of dimensions, format conversion, both limits at their boundaries, cut-short containers, animation markers and the optimizer's answers. `composer check` validates `composer.json` and runs the PSR-12 check, PHPStan at its maximum level and PHPUnit. CI runs it on PHP 8.3, 8.4 and 8.5, and on PHP 8.3 with the lowest version of every development dependency.
+Tests build small images in memory and cover all eight orientations in each format, transparency through orientation, resizing and encoding, rounding of dimensions, fast resizing, exact canvases, format conversion, both limits at their boundaries, cut-short containers, animation markers, first frames of animated PNG and of lossy, lossy-with-alpha and lossless WebP, and the optimizer's answers. `composer check` validates `composer.json` and runs the PSR-12 check, PHPStan at its maximum level and PHPUnit. CI runs it on PHP 8.3, 8.4 and 8.5, and on PHP 8.3 with the lowest version of every development dependency.

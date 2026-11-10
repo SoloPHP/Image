@@ -36,7 +36,7 @@ MIME type an upload declares is never trusted. EXIF orientation is applied, so
 taken upright is taller than wide.
 
 GIF, AVIF, HEIC and SVG are not supported. Animated PNG and WebP are rejected
-with `AnimatedImageException` instead of being reduced to their first frame.
+with `AnimatedImageException` unless you [ask for their first frame](#animated-input).
 
 ## Resize
 
@@ -54,6 +54,34 @@ box, so a 4000 × 3000 photo resized to `width: 1200, height: 600` becomes
 `resize()` returns a new image and leaves the one it was called on unchanged.
 When the image already fits, the same instance comes back and no pixels are
 copied.
+
+### Faster, at a cost
+
+```php
+$image->resize(width: 1600, fast: true);
+```
+
+By default every source pixel counts towards the result. `fast: true` reads
+four source pixels per result pixel instead, which makes turning a 12-megapixel
+JPEG into a 1600-pixel WebP a quarter to two fifths faster. The price is
+aliasing: fine detail and noise come out grainier, and the encoded file is
+larger. Use it to cap the size of an upload, where the reduction is small, and
+leave it off for thumbnails. It applies to images decoded from JPEG. For PNG
+and WebP sources, which can be transparent, it is ignored, because GD's fast
+scaler darkens the edges of transparent areas.
+
+## Fit an exact canvas
+
+```php
+$icon = $image->contain(512, 512);                    // exactly 512 × 512
+$slot = $image->contain(400, 300, upscale: false);    // never enlarged
+```
+
+`contain()` returns an image of exactly the requested size. The whole picture
+is scaled to fit and centred, and the margins are transparent. A picture smaller
+than the canvas is enlarged to fit, as icons in a web manifest need, unless
+`upscale` is `false`; then it is centred at its own size. JPEG has no
+transparency, so encoded as JPEG the margins are white.
 
 ## Encode
 
@@ -108,6 +136,34 @@ The source is decoded once and never changes, so the order of the variants does
 not matter. Each resized variant holds its own pixels until it goes out of
 scope. Let `$source` go when the last variant is made: a decoded photo takes
 about 4 bytes per pixel.
+
+Resizing reads every pixel of the image it is called on, so a small variant made
+from a large one costs a fraction of one made from the source:
+
+```php
+$large = $source->resize(width: 1400);
+$medium = $large->resize(width: 800);
+$small = $medium->resize(width: 300);
+```
+
+For a 12-megapixel photo and five widths from 1400 down to 150 that halves the
+time. The pictures differ from the direct ones only in fine detail, but rounding
+happens at every step, so the side that follows from the aspect ratio can come
+out a pixel smaller.
+
+## Animated input
+
+```php
+$still = Image::fromBytes($bytes, firstFrame: true);
+```
+
+With `firstFrame: true`, an animated PNG or WebP gives its first frame as a
+still image. For a PNG that is its default image, the one viewers without
+animation support show. A WebP frame smaller than the animation's canvas keeps
+its place on a transparent canvas of the full size. Limits apply to the canvas.
+
+Without it, animation raises `AnimatedImageException`. Still images decode the
+same either way.
 
 ## Keep only smaller results
 

@@ -20,10 +20,13 @@ final readonly class Image
     {
     }
 
-    /** Detects the format from bytes, applies EXIF orientation and enforces limits before raster decoding. */
-    public static function fromBytes(string $bytes, Limits $limits = new Limits()): self
+    /**
+     * Detects the format from bytes, applies EXIF orientation and enforces limits before raster decoding.
+     * Animated PNG and WebP are rejected unless $firstFrame asks for their first frame as a still image.
+     */
+    public static function fromBytes(string $bytes, Limits $limits = new Limits(), bool $firstFrame = false): self
     {
-        return new self(...Decoder::decode($bytes, $limits));
+        return new self(...Decoder::decode($bytes, $limits, $firstFrame));
     }
 
     public function width(): int
@@ -38,16 +41,36 @@ final readonly class Image
 
     /**
      * Fits within one or both bounds, preserving aspect ratio and never enlarging the source.
-     * An image that already fits is returned as is.
+     * An image that already fits is returned as is. $fast trades quality for speed on images decoded from JPEG
+     * and is ignored for the others, which can be transparent.
      */
-    public function resize(?int $width = null, ?int $height = null): self
+    public function resize(?int $width = null, ?int $height = null, bool $fast = false): self
     {
-        // Pixels that lie on their side take the bounds the other way round.
-        $pixels = $this->turn === 0
-            ? Raster::resize($this->pixels, $width, $height)
-            : Raster::resize($this->pixels, $height, $width);
+        [$fitWidth, $fitHeight] = Raster::fit($this->width(), $this->height(), $width, $height, false);
 
-        return $pixels === $this->pixels ? $this : new self(Raster::turn($pixels, $this->turn), 0, $this->opaque);
+        return $this->scale($fitWidth, $fitHeight, $fast);
+    }
+
+    /**
+     * Fits the whole picture inside exactly $width × $height, centred on transparent margins.
+     * A smaller picture is enlarged unless $upscale is false. JPEG output shows the margins white.
+     */
+    public function contain(int $width, int $height, bool $upscale = true): self
+    {
+        if ($width < 1 || $height < 1) {
+            throw new \InvalidArgumentException('Canvas size must be positive');
+        }
+        [$fitWidth, $fitHeight] = Raster::fit($this->width(), $this->height(), $width, $height, $upscale);
+        $image = $this->scale($fitWidth, $fitHeight);
+        if ($fitWidth === $width && $fitHeight === $height) {
+            return $image;
+        }
+
+        $pixels = Raster::turn($image->pixels, $image->turn);
+        $x = intdiv($width - $fitWidth, 2);
+        $y = intdiv($height - $fitHeight, 2);
+
+        return new self(Raster::place($pixels, $width, $height, $x, $y), 0, false);
     }
 
     /**
@@ -64,5 +87,23 @@ final readonly class Image
             imagesx($pixels),
             imagesy($pixels),
         );
+    }
+
+    /**
+     * @param positive-int $width
+     * @param positive-int $height
+     */
+    private function scale(int $width, int $height, bool $fast = false): self
+    {
+        if ($width === $this->width() && $height === $this->height()) {
+            return $this;
+        }
+
+        // Pixels that lie on their side take the size the other way round.
+        $pixels = $this->turn === 0
+            ? Raster::resize($this->pixels, $width, $height, $fast && $this->opaque)
+            : Raster::resize($this->pixels, $height, $width, $fast && $this->opaque);
+
+        return new self(Raster::turn($pixels, $this->turn), 0, $this->opaque);
     }
 }

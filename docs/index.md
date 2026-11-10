@@ -25,13 +25,13 @@ features:
     details: An image never changes after decoding. One source produces a thumbnail, a preview and a full-size copy, each with its own pixels.
   - icon: 📐
     title: Bounded resizing
-    details: Fit inside a width, a height or both. The aspect ratio is kept and nothing is enlarged. An image that already fits is returned without copying.
+    details: Fit inside a width, a height or both, or into an exact canvas with transparent margins. The aspect ratio is kept. An image that already fits is returned without copying.
   - icon: 🪶
     title: Smaller or nothing
     details: Optimizer offers a re-encoded image only when it is strictly smaller than the input. Otherwise you keep the original bytes.
   - icon: 🛡️
     title: Limits before decoding
-    details: Byte and pixel limits are read from the headers and enforced before GD allocates a raster. Animated PNG and WebP are rejected, not flattened to one frame.
+    details: Byte and pixel limits are read from the headers and enforced before GD allocates a raster. Animated PNG and WebP are rejected, or give their first frame when you ask.
   - icon: 📦
     title: Bytes in, bytes out
     details: No files, uploads, storage or framework. The library takes a string and returns a string with its format, MIME type, extension and dimensions.

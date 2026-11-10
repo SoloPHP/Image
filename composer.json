@@ -38,7 +38,7 @@
     "ext-gd": "*"
   },
   "require-dev": {
-    "phpstan/phpstan": "^2.1",
+    "phpstan/phpstan": "^2.3.5",
     "phpunit/phpunit": "^12.5",
     "squizlabs/php_codesniffer": "^4.0"
   },

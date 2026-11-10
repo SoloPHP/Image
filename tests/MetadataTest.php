@@ -65,7 +65,7 @@ final class MetadataTest extends TestCase
     public function testRejectsAnimationChunksInWebp(): void
     {
         $bytes = $this->image(Format::Webp);
-        $payload = substr($bytes, 8) . self::webpChunk('ANIM', str_repeat("\0", 6));
+        $payload = substr($bytes, 8) . Fixtures::webpChunk('ANIM', str_repeat("\0", 6));
         $bytes = self::riff($payload);
 
         $this->expectException(AnimatedImageException::class);
@@ -74,12 +74,23 @@ final class MetadataTest extends TestCase
 
     public function testRejectsWebpAnimationFlagEvenWithoutAnimationChunks(): void
     {
-        $vp8x = self::webpChunk('VP8X', "\x02\0\0\0\x02\0\0\x01\0\0");
+        $vp8x = Fixtures::webpChunk('VP8X', "\x02\0\0\0\x02\0\0\x01\0\0");
         $payload = 'WEBP' . $vp8x . substr($this->image(Format::Webp), 12);
         $bytes = self::riff($payload);
 
         $this->expectException(AnimatedImageException::class);
         Metadata::inspect($bytes);
+    }
+
+    public function testAWebpFrameMustHaveTheSizeItsHeaderDeclaresBeforeItIsDecoded(): void
+    {
+        $frame = Fixtures::encode(Fixtures::canvas(1000, 1000), Format::Webp, IMG_WEBP_LOSSLESS);
+        $bytes = Fixtures::animatedWebp(1000, 1000, [[$frame, 0, 0]]);
+        // The first ANMF payload starts at byte 52; its width and height minus one follow the offsets.
+        $bytes = substr_replace($bytes, "\x05\0\0\x03\0\0", 58, 6);
+
+        $this->expectException(InvalidImageException::class);
+        Metadata::inspect($bytes, firstFrame: true);
     }
 
     public function testRejectsAnimatedPng(): void
@@ -113,9 +124,9 @@ final class MetadataTest extends TestCase
     {
         $bytes = $this->image(Format::Webp);
         $payload = substr($bytes, 8)
-            . self::webpChunk('ZERO', '')
-            . self::webpChunk('ODD!', 'x')
-            . self::webpChunk('EXIF', Fixtures::tiff(5));
+            . Fixtures::webpChunk('ZERO', '')
+            . Fixtures::webpChunk('ODD!', 'x')
+            . Fixtures::webpChunk('EXIF', Fixtures::tiff(5));
         $bytes = self::riff($payload);
 
         self::assertSame(5, Metadata::inspect($bytes)->orientation);
@@ -170,8 +181,8 @@ final class MetadataTest extends TestCase
 
     private static function webpWithExif(string $bytes, string $tiff): string
     {
-        $vp8x = self::webpChunk('VP8X', "\x08\0\0\0\x02\0\0\x01\0\0");
-        $payload = 'WEBP' . $vp8x . substr($bytes, 12) . self::webpChunk('EXIF', $tiff);
+        $vp8x = Fixtures::webpChunk('VP8X', "\x08\0\0\0\x02\0\0\x01\0\0");
+        $payload = 'WEBP' . $vp8x . substr($bytes, 12) . Fixtures::webpChunk('EXIF', $tiff);
 
         return self::riff($payload);
     }
@@ -180,10 +191,5 @@ final class MetadataTest extends TestCase
     private static function riff(string $payload): string
     {
         return 'RIFF' . pack('V', strlen($payload)) . $payload;
-    }
-
-    private static function webpChunk(string $type, string $payload): string
-    {
-        return $type . pack('V', strlen($payload)) . $payload . (strlen($payload) % 2 === 1 ? "\0" : '');
     }
 }

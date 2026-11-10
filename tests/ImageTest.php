@@ -129,6 +129,34 @@ final class ImageTest extends TestCase
         self::assertNotSame($source, $source->resize(width: 119));
     }
 
+    public function testFastResizeHasTheSameSizeAsTheDefault(): void
+    {
+        $jpeg = Image::fromBytes(Image::fromBytes(self::png(120, 80))->encode(Format::Jpeg)->bytes);
+
+        $fast = $jpeg->resize(width: 58, fast: true);
+        self::assertSame([58, 38], [$fast->width(), $fast->height()]);
+        self::assertSame($jpeg, $jpeg->resize(width: 120, fast: true));
+    }
+
+    public function testFastResizeLeavesTransparentEdgesClean(): void
+    {
+        $canvas = Fixtures::transparent(90, 90);
+        imagefilledrectangle($canvas, 30, 30, 59, 59, 0xFFFFFF);
+        $image = Image::fromBytes(Fixtures::encode($canvas, Format::Png))->resize(width: 26, fast: true);
+        $pixels = imagecreatefromstring($image->encode(Format::Png)->bytes);
+        self::assertInstanceOf(GdImage::class, $pixels);
+
+        // Over white, a white square on transparency must stay white: GD's fast scaler would darken its edges.
+        for ($y = 0; $y < 26; $y++) {
+            for ($x = 0; $x < 26; $x++) {
+                $pixel = imagecolorat($pixels, $x, $y);
+                self::assertIsInt($pixel);
+                $opacity = (127 - ($pixel >> 24)) / 127;
+                self::assertGreaterThanOrEqual(254, ($pixel & 0xFF) * $opacity + 255 * (1 - $opacity));
+            }
+        }
+    }
+
     public function testTransparencySurvivesOrientationResizingAndEncoding(): void
     {
         $png = Fixtures::encode(Fixtures::transparent(8, 4), Format::Png);
@@ -294,6 +322,15 @@ final class ImageTest extends TestCase
         self::assertSame([30, 20], [$result->width, $result->height]);
         self::assertLessThan(strlen($original), $result->size());
         self::assertSame('image/webp', $result->mimeType());
+    }
+
+    public function testOptimizerCanResizeFast(): void
+    {
+        $jpeg = Image::fromBytes(self::png(120, 80))->encode(Format::Jpeg, 100)->bytes;
+        $result = (new Optimizer())->optimize($jpeg, Format::Jpeg, maxWidth: 30, fast: true);
+
+        self::assertNotNull($result);
+        self::assertSame([30, 20], [$result->width, $result->height]);
     }
 
     public function testOptimizerPropagatesLimits(): void

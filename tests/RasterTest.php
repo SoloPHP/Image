@@ -80,35 +80,67 @@ final class RasterTest extends TestCase
 
     public function testBothBoundsAreRespectedWithoutUpscaling(): void
     {
-        $source = Fixtures::canvas(120, 80);
-        $image = Raster::resize($source, 100, 40);
-        self::assertSame(60, imagesx($image));
-        self::assertSame(40, imagesy($image));
-        self::assertSame(120, imagesx($source));
+        self::assertSame([60, 40], Raster::fit(120, 80, 100, 40, false));
+        self::assertSame([120, 80], Raster::fit(120, 80, 500, 500, false));
+        self::assertSame([120, 80], Raster::fit(120, 80, 120, null, false));
 
-        self::assertSame($source, Raster::resize($source, 500, 500));
-        self::assertSame($source, Raster::resize($source, 120, null));
+        $source = Fixtures::canvas(120, 80);
+        $image = Raster::resize($source, 60, 40);
+        self::assertSame([60, 40], [imagesx($image), imagesy($image)]);
+        self::assertSame([120, 80], [imagesx($source), imagesy($source)]);
+        self::assertSame($source, Raster::resize($source, 120, 80));
+    }
+
+    public function testUpscalingFillsTheConstrainingBound(): void
+    {
+        self::assertSame([300, 200], Raster::fit(120, 80, 300, 300, true));
+        self::assertSame([20, 30], Raster::fit(80, 120, 30, 30, true));
+        self::assertSame([100, 33], Raster::fit(3, 1, 100, 100, true));
     }
 
     public function testTheConstrainingWidthIsExactDespiteFloatingPointRounding(): void
     {
-        $image = Raster::resize(Fixtures::canvas(100, 50), 58, null);
-        self::assertSame(58, imagesx($image));
-        self::assertSame(29, imagesy($image));
+        self::assertSame([58, 29], Raster::fit(100, 50, 58, null, false));
     }
 
     public function testAHeightBoundAloneFitsPortraitImages(): void
     {
-        $image = Raster::resize(Fixtures::canvas(80, 120), null, 60);
-        self::assertSame(40, imagesx($image));
-        self::assertSame(60, imagesy($image));
+        self::assertSame([40, 60], Raster::fit(80, 120, null, 60, false));
     }
 
     public function testVeryThinImagesKeepAtLeastOnePixel(): void
     {
-        $image = Raster::resize(Fixtures::canvas(100, 1), 1, null);
-        self::assertSame(1, imagesx($image));
-        self::assertSame(1, imagesy($image));
+        self::assertSame([1, 1], Raster::fit(100, 1, 1, null, false));
+    }
+
+    public function testFastResizeKeepsOpaqueEdges(): void
+    {
+        $source = Fixtures::canvas(403, 302);
+        imagefilledrectangle($source, 0, 0, 402, 301, 0xFFFFFF);
+
+        // GD's bilinear scaler works in fixed point and can be off by two levels anywhere, edges included.
+        $image = Raster::resize($source, 160, 119, true);
+        self::assertSame([160, 119], [imagesx($image), imagesy($image)]);
+        foreach ([[0, 0], [159, 0], [0, 118], [159, 118], [80, 60]] as [$x, $y]) {
+            $pixel = imagecolorat($image, $x, $y);
+            self::assertIsInt($pixel);
+            self::assertSame(0, $pixel >> 24);
+            self::assertEqualsWithDelta(255, $pixel & 0xFF, 2);
+            self::assertEqualsWithDelta(255, ($pixel >> 16) & 0xFF, 2);
+        }
+    }
+
+    public function testPlacingLeavesTheRestTransparent(): void
+    {
+        $source = Fixtures::canvas(2, 2);
+        imagefilledrectangle($source, 0, 0, 1, 1, 0x336699);
+
+        $image = Raster::place($source, 5, 4, 3, 1);
+        self::assertSame([5, 4], [imagesx($image), imagesy($image)]);
+        self::assertSame(0x336699, imagecolorat($image, 3, 1));
+        self::assertSame(0x336699, imagecolorat($image, 4, 2));
+        self::assertSame(0x7F000000, imagecolorat($image, 2, 1));
+        self::assertSame(0x7F000000, imagecolorat($image, 4, 3));
     }
 
     public function testIndexedTransparencyBecomesAlphaAndSurvivesOrientationAndResize(): void

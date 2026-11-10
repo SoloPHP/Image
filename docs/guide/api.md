@@ -6,7 +6,7 @@ The public API consists of five types and the exceptions. `Image`, `EncodedImage
 
 | Type | Role |
 |---|---|
-| `Image` | A decoded still image: its size, resized copies and encoding |
+| `Image` | A decoded still image: its size, resized and fitted copies and encoding |
 | `EncodedImage` | Encoded bytes with their format and pixel dimensions |
 | `Format` | The formats that can be read and written: JPEG, PNG and WebP |
 | `Limits` | The largest input, in bytes and in pixels, that will be decoded |
@@ -20,10 +20,10 @@ An image is created with `fromBytes()` only. It is immutable: no method changes 
 ### fromBytes()
 
 ```php
-public static function fromBytes(string $bytes, Limits $limits = new Limits()): self
+public static function fromBytes(string $bytes, Limits $limits = new Limits(), bool $firstFrame = false): self
 ```
 
-Decodes JPEG, PNG or static WebP, detected from the contents, and applies the EXIF orientation. It refuses input for these reasons:
+Decodes JPEG, PNG or static WebP, detected from the contents, and applies the EXIF orientation. With `$firstFrame`, an animated PNG or WebP is decoded as its first frame instead of being refused: the default image of a PNG, or the first frame of a WebP on a transparent canvas of the animation's size. It refuses input for these reasons:
 
 | Reason | Exception |
 |---|---|
@@ -31,7 +31,8 @@ Decodes JPEG, PNG or static WebP, detected from the contents, and applies the EX
 | The bytes are empty or not a recognizable image | `InvalidImageException` |
 | The image is not JPEG, PNG or WebP | `UnsupportedFormatException` |
 | A PNG or WebP container is cut short | `InvalidImageException` |
-| The PNG or WebP is animated | `AnimatedImageException` |
+| The PNG or WebP is animated, and `$firstFrame` is `false` | `AnimatedImageException` |
+| An animated WebP has no frame, or its first frame is cut short, has no image data, is not the size it declares or lies outside the canvas | `InvalidImageException` |
 | Width × height is more than `$limits->maxPixels` | `ImageTooLargeException` |
 | GD is built without the codec for this format | `UnsupportedFormatException` |
 | GD cannot decode the pixels | `InvalidImageException` |
@@ -50,14 +51,28 @@ The size in pixels after orientation: a photo stored sideways with an EXIF rotat
 ### resize()
 
 ```php
-public function resize(?int $width = null, ?int $height = null): self
+public function resize(?int $width = null, ?int $height = null, bool $fast = false): self
 ```
 
 Returns an image that fits within the bounds, with the aspect ratio kept. With one bound, the other side follows from the aspect ratio. With two, the image fits inside the box. A side is never enlarged; the derived side is rounded down and is at least one pixel.
 
+By default every source pixel is averaged into the result, weighted by its opacity. With `$fast`, an image decoded from JPEG is resized with GD's bilinear scaler, which reads four source pixels per result pixel: faster, but grainier and larger once encoded. `$fast` is ignored for images decoded from PNG or WebP, which can be transparent, even when they happen to be opaque, and for results of `contain()` with margins.
+
 When the image already fits, the same instance is returned. Otherwise the result has its own pixels and the source is unchanged.
 
 Throws `InvalidArgumentException` when both bounds are `null` or a bound is less than `1`. Throws `ImageException` when GD cannot allocate or resample the result.
+
+### contain()
+
+```php
+public function contain(int $width, int $height, bool $upscale = true): self
+```
+
+Returns an image of exactly `$width` × `$height`. The picture is scaled to fit inside with the aspect ratio kept, following the rounding of `resize()`, and centred; the margins are transparent. When the margins are uneven, the extra pixel goes to the right or the bottom. With `$upscale`, a picture smaller than the canvas is enlarged until a side meets it; without, it keeps its size.
+
+An image that already has the size is returned as is. A result with margins counts as transparent: encoded as JPEG the margins are white, and as PNG it has an alpha channel.
+
+Throws `InvalidArgumentException` when a side is less than `1`, and `ImageException` when GD cannot allocate or resample the result.
 
 ### encode()
 
@@ -139,10 +154,11 @@ public function optimize(
     int $quality = 82,
     ?int $maxWidth = null,
     ?int $maxHeight = null,
+    bool $fast = false,
 ): ?EncodedImage
 ```
 
-Decodes `$bytes`, resizes within the bounds when at least one is given, and encodes. Returns the result when it is strictly smaller than `$bytes`, and `null` otherwise.
+Decodes `$bytes`, resizes within the bounds when at least one is given, with `$fast` as `Image::resize()` takes it, and encodes. Animated input is always refused. Returns the result when it is strictly smaller than `$bytes`, and `null` otherwise.
 
 `null` says only that the candidate was not smaller. The input may be in another format or larger than the bounds.
 
@@ -157,7 +173,7 @@ All of them live in `Solo\Image\Exception`.
 | `ImageException` | `RuntimeException` | GD cannot allocate, resize or encode an image. Also the base of the rest. |
 | `InvalidImageException` | `ImageException` | The bytes are not an image, a container is cut short or the pixels cannot be decoded |
 | `UnsupportedFormatException` | `ImageException` | The format is not JPEG, PNG or WebP, or GD lacks its codec |
-| `AnimatedImageException` | `ImageException` | A PNG or WebP is animated |
+| `AnimatedImageException` | `ImageException` | A PNG or WebP is animated and its first frame was not asked for |
 | `ImageTooLargeException` | `ImageException` | The input is over the byte or the pixel limit |
 
 Invalid arguments raise PHP's `InvalidArgumentException`, which is not an `ImageException`.
