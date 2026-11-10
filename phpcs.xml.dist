@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<ruleset name="Solo Image">
+    <description>PSR-12 coding standard for the library and its tests.</description>
+    <file>src</file>
+    <file>tests</file>
+    <arg name="colors"/>
+    <arg value="sp"/>
+    <rule ref="PSR12"/>
+</ruleset>

@@ -1,0 +1,12 @@
+/vendor/
+/composer.lock
+/.idea/
+/.phpunit.cache/
+/.phpstan.cache/
+/coverage/
+.DS_Store
+
+# Documentation
+/docs/node_modules/
+/docs/.vitepress/cache/
+/docs/.vitepress/dist/
